@@ -24,15 +24,15 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "https://{{$env.CONNECTWISE_HOST}}/v4_6_release/apis/3.0/service/tickets",
+        "url": "https://portal.choicecloud.com/v4_6_release/apis/3.0/service/tickets",
         "authentication": "genericCredentialType",
-        "genericAuthType": "httpBasicAuth",
+        "genericAuthType": "httpHeaderAuth",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
             {
               "name": "conditions",
-              "value": "summary contains 'Restore' and status/name != 'Closed'"
+              "value": "summary contains 'Restore' AND status/name not in (\"Cancelled\",\"Closed\",\"Completed\")"
             },
             {
               "name": "pageSize",
@@ -49,14 +49,14 @@
           "parameters": [
             {
               "name": "clientId",
-              "value": "={{$env.CONNECTWISE_CLIENT_ID}}"
+              "value": "0d5da4ac-da1e-4362-b723-881330675fe4"
             }
           ]
         },
         "options": {}
       },
       "id": "a1b2c3d4-1001-4000-8000-000000000002",
-      "name": "Query CW Tickets",
+      "name": "Query CW Restore Tickets",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -64,12 +64,12 @@
         300
       ],
       "credentials": {
-        "httpBasicAuth": {
-          "id": "CONNECTWISE_BASIC_AUTH_CREDENTIAL_ID",
-          "name": "ConnectWise PSA API Auth"
+        "httpHeaderAuth": {
+          "id": "RS1aHxghqa9C5VAg",
+          "name": "CWM Header API Auth"
         }
       },
-      "notes": "Queries ConnectWise PSA for open tickets with 'Restore' in the summary. Uses Basic Auth with company+publicKey:privateKey format. The clientId header is required by CW API."
+      "notes": "Queries ConnectWise Manage for open tickets with 'Restore' in the summary. Uses the same Header Auth and clientId as the existing CW Manage MCP Agent workflow."
     },
     {
       "parameters": {
@@ -81,7 +81,7 @@
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
       "position": [
-        260,
+        280,
         300
       ],
       "notes": "Splits the array of tickets into individual items for processing one at a time."
@@ -89,9 +89,9 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://{{$env.CONNECTWISE_HOST}}/v4_6_release/apis/3.0/service/tickets/{{ $json.id }}/notes",
+        "url": "=https://portal.choicecloud.com/v4_6_release/apis/3.0/service/tickets/{{ $json.id }}/notes",
         "authentication": "genericCredentialType",
-        "genericAuthType": "httpBasicAuth",
+        "genericAuthType": "httpHeaderAuth",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
@@ -110,7 +110,7 @@
           "parameters": [
             {
               "name": "clientId",
-              "value": "={{$env.CONNECTWISE_CLIENT_ID}}"
+              "value": "0d5da4ac-da1e-4362-b723-881330675fe4"
             }
           ]
         },
@@ -121,30 +121,30 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        480,
+        520,
         300
       ],
       "credentials": {
-        "httpBasicAuth": {
-          "id": "CONNECTWISE_BASIC_AUTH_CREDENTIAL_ID",
-          "name": "ConnectWise PSA API Auth"
+        "httpHeaderAuth": {
+          "id": "RS1aHxghqa9C5VAg",
+          "name": "CWM Header API Auth"
         }
       },
-      "notes": "Retrieves all notes for the current ticket. Notes are ordered newest-first so the latest status updates appear at the top."
+      "notes": "Retrieves all notes for the current ticket via CW Manage API. Notes are ordered newest-first so the latest status updates appear at the top."
     },
     {
       "parameters": {
-        "jsCode": "// Collect all note text from the ticket notes response\nconst ticketData = $('Split Tickets').first().json;\nconst ticketId = ticketData.id;\nconst ticketSummary = ticketData.summary;\nconst notes = $input.all();\n\n// Concatenate all note text fields for keyword scanning\nlet allNoteText = '';\nconst noteDetails = [];\n\nfor (const noteItem of notes) {\n  const note = noteItem.json;\n  const text = (note.text || '').toLowerCase();\n  const internalText = (note.internalAnalysisFlag ? note.text : '') || '';\n  const detailText = (note.detailDescriptionFlag ? note.text : '') || '';\n  \n  allNoteText += ' ' + text + ' ' + internalText.toLowerCase() + ' ' + detailText.toLowerCase();\n  \n  noteDetails.push({\n    noteId: note.id,\n    text: note.text,\n    dateCreated: note.dateCreated,\n    createdBy: note.createdBy,\n    internalFlag: note.internalAnalysisFlag,\n    detailFlag: note.detailDescriptionFlag\n  });\n}\n\n// Define keywords and scan\nconst keywords = ['completed', 'restore completed', 'validated', 'submitted'];\nconst foundKeywords = [];\n\nfor (const keyword of keywords) {\n  if (allNoteText.includes(keyword)) {\n    foundKeywords.push(keyword);\n  }\n}\n\n// Determine status category for branching\nlet statusCategory = 'no_match';\nif (allNoteText.includes('restore completed') || allNoteText.includes('completed')) {\n  statusCategory = 'completed';\n} else if (allNoteText.includes('validated')) {\n  statusCategory = 'validated';\n} else if (allNoteText.includes('submitted')) {\n  statusCategory = 'submitted';\n}\n\n// Extract potential VM name from ticket summary\n// Pattern: looks for \"Restore\" followed by identifiers and a date\nconst vmNameMatch = ticketSummary.match(/Restore[\\s_-]*(\\S+)/i);\nconst potentialVmIdentifier = vmNameMatch ? vmNameMatch[1] : ticketSummary;\n\nreturn [{\n  json: {\n    ticketId,\n    ticketSummary,\n    allNoteText: allNoteText.trim(),\n    foundKeywords,\n    statusCategory,\n    potentialVmIdentifier,\n    noteCount: noteDetails.length,\n    latestNote: noteDetails.length > 0 ? noteDetails[0] : null,\n    scanTimestamp: new Date().toISOString()\n  }\n}];"
+        "jsCode": "// Collect all note text from the ticket notes response\nconst ticketData = $('Split Tickets').first().json;\nconst ticketId = ticketData.id;\nconst ticketSummary = ticketData.summary;\nconst notes = $input.all();\n\n// Concatenate all note text fields for keyword scanning\nlet allNoteText = '';\nconst noteDetails = [];\n\nfor (const noteItem of notes) {\n  const note = noteItem.json;\n  // CW Manage notes have text, internalAnalysisFlag, detailDescriptionFlag\n  const text = (note.text || '').toLowerCase();\n  const internalText = (note.internalAnalysisFlag ? note.text : '') || '';\n  const detailText = (note.detailDescriptionFlag ? note.text : '') || '';\n  \n  allNoteText += ' ' + text + ' ' + internalText.toLowerCase() + ' ' + detailText.toLowerCase();\n  \n  noteDetails.push({\n    noteId: note.id,\n    text: note.text,\n    dateCreated: note.dateCreated,\n    createdBy: note.createdBy,\n    internalFlag: note.internalAnalysisFlag,\n    detailFlag: note.detailDescriptionFlag\n  });\n}\n\n// Define keywords and scan\nconst keywords = ['completed', 'restore completed', 'validated', 'submitted'];\nconst foundKeywords = [];\n\nfor (const keyword of keywords) {\n  if (allNoteText.includes(keyword)) {\n    foundKeywords.push(keyword);\n  }\n}\n\n// Determine status category for branching\n// Priority: restore completed/completed > validated > submitted\nlet statusCategory = 'no_match';\nif (allNoteText.includes('restore completed') || allNoteText.includes('completed')) {\n  statusCategory = 'completed';\n} else if (allNoteText.includes('validated')) {\n  statusCategory = 'validated';\n} else if (allNoteText.includes('submitted')) {\n  statusCategory = 'submitted';\n}\n\n// Extract potential VM name from ticket summary\n// Pattern: looks for \"Restore\" followed by identifiers and a date\n// e.g. \"Restore ServerName 2026-02-06\" or \"ServerName_Restore_2026-02-06\"\nconst vmNameMatch = ticketSummary.match(/Restore[\\s_-]*(\\S+)/i);\nconst potentialVmIdentifier = vmNameMatch ? vmNameMatch[1] : ticketSummary;\n\nreturn [{\n  json: {\n    ticketId,\n    ticketSummary,\n    allNoteText: allNoteText.trim(),\n    foundKeywords,\n    statusCategory,\n    potentialVmIdentifier,\n    noteCount: noteDetails.length,\n    latestNote: noteDetails.length > 0 ? noteDetails[0] : null,\n    scanTimestamp: new Date().toISOString()\n  }\n}];"
       },
       "id": "a1b2c3d4-1001-4000-8000-000000000005",
       "name": "Scan Notes for Keywords",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        700,
+        760,
         300
       ],
-      "notes": "Scans all ticket notes for keywords: completed, restore completed, validated, submitted. Determines a statusCategory for downstream branching. Also extracts a potential VM identifier from the ticket summary."
+      "notes": "Scans all ticket notes for keywords: completed, restore completed, validated, submitted. Determines a statusCategory for downstream IF branching. Also extracts a potential VM identifier from the ticket summary."
     },
     {
       "parameters": {
@@ -174,15 +174,15 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        940,
+        1000,
         300
       ],
-      "notes": "Branches on whether the ticket notes indicate a restore has been completed. TRUE path: proceeds to Nutanix VM verification. FALSE path: routes to secondary keyword check."
+      "notes": "Branches on whether the ticket notes indicate a restore has been completed. TRUE path → Nutanix VM verification. FALSE path → secondary keyword check (validated/submitted)."
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "https://{{$env.NUTANIX_HOST}}:9440/api/nutanix/v3/vms/list",
+        "url": "=https://{{ $env.NUTANIX_PRISM_HOST }}:9440/api/nutanix/v3/vms/list",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBasicAuth",
         "sendBody": true,
@@ -207,8 +207,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1200,
-        200
+        1280,
+        180
       ],
       "credentials": {
         "httpBasicAuth": {
@@ -216,21 +216,21 @@
           "name": "Nutanix Prism Central Auth"
         }
       },
-      "notes": "Queries Nutanix Prism Central v3 API for VMs matching the restore pattern. VM names typically follow the format: <VMName>_Restore_<YYYY-MM-DD>. Uses allowUnauthorizedCerts for self-signed Nutanix certs."
+      "notes": "Queries Nutanix Prism Central v3 API for VMs matching the restore pattern. VM names follow: <VMName>_Restore_<YYYY-MM-DD>. Uses allowUnauthorizedCerts for self-signed Nutanix certs. SETUP: Create an HTTP Basic Auth credential in n8n for your Nutanix admin user, then replace NUTANIX_BASIC_AUTH_CREDENTIAL_ID with the actual credential ID. Also set NUTANIX_PRISM_HOST env variable."
     },
     {
       "parameters": {
-        "jsCode": "const nutanixResponse = $input.first().json;\nconst ticketData = $('Scan Notes for Keywords').first().json;\n\nconst entities = nutanixResponse.entities || [];\nconst vmList = [];\n\nfor (const vm of entities) {\n  const vmName = vm.spec?.name || vm.status?.name || 'Unknown';\n  const vmUuid = vm.metadata?.uuid || 'Unknown';\n  const powerState = vm.status?.resources?.power_state || 'Unknown';\n  const creationTime = vm.metadata?.creation_time || 'Unknown';\n  const clusterName = vm.status?.cluster_reference?.name || 'Unknown';\n  \n  // Extract date from VM name (pattern: Restore_YYYY-MM-DD or Restore-YYYY-MM-DD)\n  const dateMatch = vmName.match(/Restore[_-](\\d{4}[_-]\\d{2}[_-]\\d{2})/i);\n  const restoreDate = dateMatch ? dateMatch[1].replace(/_/g, '-') : null;\n  \n  vmList.push({\n    vmName,\n    vmUuid,\n    powerState,\n    creationTime,\n    clusterName,\n    restoreDate,\n    isRunning: powerState.toUpperCase() === 'ON'\n  });\n}\n\nreturn [{\n  json: {\n    ticketId: ticketData.ticketId,\n    ticketSummary: ticketData.ticketSummary,\n    statusCategory: ticketData.statusCategory,\n    foundKeywords: ticketData.foundKeywords,\n    vmCount: vmList.length,\n    vms: vmList,\n    hasRestoredVMs: vmList.length > 0,\n    allVMsRunning: vmList.length > 0 && vmList.every(v => v.isRunning),\n    processedAt: new Date().toISOString()\n  }\n}];"
+        "jsCode": "const nutanixResponse = $input.first().json;\nconst ticketData = $('Scan Notes for Keywords').first().json;\n\nconst entities = nutanixResponse.entities || [];\nconst vmList = [];\n\nfor (const vm of entities) {\n  const vmName = vm.spec?.name || vm.status?.name || 'Unknown';\n  const vmUuid = vm.metadata?.uuid || 'Unknown';\n  const powerState = vm.status?.resources?.power_state || 'Unknown';\n  const creationTime = vm.metadata?.creation_time || 'Unknown';\n  const clusterName = vm.status?.cluster_reference?.name || 'Unknown';\n  const numVcpus = vm.status?.resources?.num_sockets || 'Unknown';\n  const memoryMb = vm.status?.resources?.memory_size_mib || 'Unknown';\n  \n  // Extract date from VM name (pattern: Restore_YYYY-MM-DD or Restore-YYYY-MM-DD)\n  const dateMatch = vmName.match(/Restore[_-](\\d{4}[_-]\\d{2}[_-]\\d{2})/i);\n  const restoreDate = dateMatch ? dateMatch[1].replace(/_/g, '-') : null;\n  \n  vmList.push({\n    vmName,\n    vmUuid,\n    powerState,\n    creationTime,\n    clusterName,\n    restoreDate,\n    numVcpus,\n    memoryMb,\n    isRunning: powerState.toUpperCase() === 'ON'\n  });\n}\n\nreturn [{\n  json: {\n    ticketId: ticketData.ticketId,\n    ticketSummary: ticketData.ticketSummary,\n    statusCategory: ticketData.statusCategory,\n    foundKeywords: ticketData.foundKeywords,\n    vmCount: vmList.length,\n    vms: vmList,\n    hasRestoredVMs: vmList.length > 0,\n    allVMsRunning: vmList.length > 0 && vmList.every(v => v.isRunning),\n    processedAt: new Date().toISOString()\n  }\n}];"
       },
       "id": "a1b2c3d4-1001-4000-8000-000000000008",
       "name": "Parse Nutanix VM Results",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1440,
-        200
+        1520,
+        180
       ],
-      "notes": "Parses the Nutanix API response to extract VM details. Extracts the restore date from VM names following the pattern <Name>_Restore_YYYY-MM-DD. Determines if VMs are found and running."
+      "notes": "Parses Nutanix API response. Extracts VM name, UUID, power state, cluster, vCPUs, memory, and the restore date from the VM name pattern <Name>_Restore_YYYY-MM-DD."
     },
     {
       "parameters": {
@@ -260,10 +260,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        1680,
-        200
+        1760,
+        180
       ],
-      "notes": "Checks if any matching restored VMs were found on Nutanix. TRUE: VM exists and can be validated. FALSE: No matching VM found — may need investigation."
+      "notes": "Checks if matching restored VMs were found on Nutanix. TRUE → VM verified. FALSE → VM not found, needs investigation."
     },
     {
       "parameters": {
@@ -302,10 +302,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        1200,
+        1280,
         480
       ],
-      "notes": "Secondary keyword check for tickets that are not yet 'completed'. Checks if notes contain 'validated' or 'submitted' keywords, indicating the ticket is in progress but not yet at the Nutanix verification stage."
+      "notes": "Secondary keyword check for tickets not yet completed. Checks for 'validated' or 'submitted' — ticket is in progress but not ready for Nutanix verification."
     },
     {
       "parameters": {
@@ -350,10 +350,10 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1920,
-        120
+        2000,
+        80
       ],
-      "notes": "Formats the successful verification output. The VM was found on Nutanix and the restore can be confirmed."
+      "notes": "VM was found on Nutanix — restore confirmed."
     },
     {
       "parameters": {
@@ -392,10 +392,10 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1920,
-        320
+        2000,
+        300
       ],
-      "notes": "Formats the output when no matching VM was found on Nutanix despite the ticket being marked as completed."
+      "notes": "No matching VM found on Nutanix despite ticket marked completed."
     },
     {
       "parameters": {
@@ -440,10 +440,10 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1440,
+        1520,
         420
       ],
-      "notes": "Output for tickets where keywords like 'validated' or 'submitted' were found but restore is not yet complete."
+      "notes": "Ticket has 'validated' or 'submitted' — restore in progress, not ready for Nutanix check."
     },
     {
       "parameters": {
@@ -482,10 +482,10 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1440,
-        580
+        1520,
+        600
       ],
-      "notes": "Output for tickets where none of the expected keywords were found in the notes."
+      "notes": "No keywords found in ticket notes. No action taken."
     }
   ],
   "connections": {
@@ -493,14 +493,14 @@
       "main": [
         [
           {
-            "node": "Query CW Tickets",
+            "node": "Query CW Restore Tickets",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Query CW Tickets": {
+    "Query CW Restore Tickets": {
       "main": [
         [
           {
@@ -625,25 +625,14 @@
   "settings": {
     "executionOrder": "v1",
     "saveManualExecutions": true,
-    "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": ""
+    "callerPolicy": "workflowsFromSameOwner"
   },
   "staticData": null,
-  "tags": [
-    {
-      "name": "ConnectWise",
-      "id": "tag-connectwise"
-    },
-    {
-      "name": "Nutanix",
-      "id": "tag-nutanix"
-    },
-    {
-      "name": "Backup & Restore",
-      "id": "tag-backup-restore"
-    }
-  ],
+  "tags": [],
   "triggerCount": 1,
   "updatedAt": "2026-02-06T00:00:00.000Z",
-  "versionId": "1"
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
 }
